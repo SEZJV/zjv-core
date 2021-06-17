@@ -10,42 +10,87 @@ import bus._
 import device._
 import utils._
 import chisel3.util.experimental.BoringUtils
+import chisel3.util.random.LFSR
 
-class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
+class DCacheSecure(implicit val cacheConfig: CacheConfig)
     extends Module
     with CacheParameters {
   val io = IO(new CacheIO)
 
-  // Module Used
-//  val metaArray = if (fpga) {
-//    List.fill(nWays)(Module(new BRAMSyncReadMem(nSets, (new MetaData).getWidth, 1)))
-//  } else {
-//    List.fill(nWays)(SyncReadMem(nSets, new MetaData))
-//  }
-//  val dataArray = if (fpga) {
-//    List.fill(nWays)(Module(new BRAMSyncReadMem(nSets, (new CacheLineData()).getWidth, 1)))
-//  } else {
-//    List.fill(nWays)(SyncReadMem(nSets, new CacheLineData))
-//  }
+  // Module LNData Definition
+  class LNData(val indexLength: Int = 10) extends Bundle {
+    val valid = Bool()
+    val index = UInt(indexLength.W)
+    override def toPrintable: Printable =
+      p"LNData(valid = ${valid}, index = ${Hexadecimal(index)})"
+  }
+
+  class LNMetaData(val tagLength: Int) extends Bundle {
+    val valid = Bool()
+    val tag = UInt(tagLength.W)
+    override def toPrintable: Printable =
+      p"LNMetaData(valid = ${valid}, tag = 0x${Hexadecimal(tag)})"
+  }
+
+  val extraIndexLength = 3
+  val virtualIndexLength = indexLength + extraIndexLength
+  val virtualTagLength = tagLength - extraIndexLength
+  val metaTagLength = xlen - offsetLength
+  val lnregs = List.fill(nWays)(
+    RegInit(
+      VecInit(
+        Seq.fill(nSets)(
+          0.U((virtualIndexLength + 1).W)
+            .asTypeOf(new LNData(virtualIndexLength))
+        )
+      )
+    )
+  )
+
+  def get_index(addr: UInt, regs: Vec[LNData]): UInt = {
+    val hit_vector = VecInit(regs.map(m => m.valid && m.index === addr)).asUInt
+    val hit_index = PriorityEncoder(hit_vector)
+    val is_hit = hit_vector.orR
+    Mux(is_hit, hit_index, LFSR(indexLength))
+  }
 
   val stall = Wire(Bool())
   val s2_need_forward = Wire(Bool())
-  val write_meta = Wire(Vec(nWays, new MetaData))
-  val write_data = Reg(Vec(nWays, new CacheLineData))
-  val writeData = Wire(Vec(nWays, new CacheLineData))
+  val update_meta = Wire(Bool())
+  val write_meta = Wire(new LNMetaData(metaTagLength))
+  val write_data = Reg(new CacheLineData)
+  val writeData = Wire(new CacheLineData)
   val need_write = Wire(Bool())
 
   /* stage1 signals */
   val s1_valid = WireDefault(Bool(), false.B)
   val s1_addr = Wire(UInt(xlen.W))
-  val s1_index = Wire(UInt(indexLength.W))
+  val s1_virtual_index = Wire(UInt(virtualIndexLength.W))
+  val s1_physical_index = List.fill(nWays)(Wire(UInt(indexLength.W)))
   val s1_data = Wire(UInt(blockBits.W))
   val s1_wen = WireDefault(Bool(), false.B)
   val s1_memtype = Wire(UInt(xlen.W))
+  val s2_virtual_index = Wire(UInt(virtualIndexLength.W))
+  val s2_physical_index = List.fill(nWays)(Reg(UInt(indexLength.W)))
+  val s3_valid = RegInit(Bool(), false.B)
+  val s2_access_index = Wire(UInt(log2Ceil(nWays).W))
+  val s3_access_index = Reg(chiselTypeOf(s2_access_index))
+  val s3_virtual_index = Wire(UInt(virtualIndexLength.W))
+  val s3_physical_index = List.fill(nWays)(Reg(UInt(indexLength.W)))
 
   s1_valid := io.in.req.valid
   s1_addr := io.in.req.bits.addr
-  s1_index := s1_addr(indexLength + offsetLength - 1, offsetLength)
+  s1_virtual_index := s1_addr(
+    virtualIndexLength + offsetLength - 1,
+    offsetLength
+  )
+  for (i <- 0 until nWays) {
+    s1_physical_index(i) := Mux(
+      s1_valid && update_meta && s3_access_index === i.U && s1_virtual_index === s3_virtual_index,
+      s3_physical_index(i),
+      get_index(s1_virtual_index, lnregs(i))
+    )
+  }
   s1_data := io.in.req.bits.data
   s1_wen := io.in.req.bits.wen
   s1_memtype := io.in.req.bits.memtype
@@ -56,24 +101,36 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
   val s2_data = RegInit(UInt(blockBits.W), 0.U)
   val s2_wen = RegInit(Bool(), false.B)
   val s2_memtype = RegInit(UInt(xlen.W), 0.U)
-  val s2_meta = Wire(Vec(nWays, new MetaData))
+  val s2_meta = Wire(Vec(nWays, new LNMetaData(metaTagLength)))
   val s2_cacheline = Wire(Vec(nWays, new CacheLineData))
-  val array_meta = Wire(Vec(nWays, new MetaData))
+  val array_meta = Wire(Vec(nWays, new LNMetaData(metaTagLength)))
   val array_cacheline = Wire(Vec(nWays, new CacheLineData))
-  val forward_meta = Wire(Vec(nWays, new MetaData))
+  val forward_meta = Wire(Vec(nWays, new LNMetaData(metaTagLength)))
   val forward_cacheline = Wire(Vec(nWays, new CacheLineData))
-  val s2_index = Wire(UInt(indexLength.W))
-  val s2_tag = Wire(UInt(tagLength.W))
-  val read_index = Mux(io.in.stall, s2_index, s1_index)
-  val s3_valid = RegInit(Bool(), false.B)
-  val s3_index = Wire(UInt(indexLength.W))
+  val s2_tag = Wire(UInt(metaTagLength.W))
+  val s3_tag = Wire(UInt(metaTagLength.W))
+  val read_index = List.fill(nWays)(Wire(UInt(indexLength.W)))
+  for (i <- 0 until nWays) {
+    read_index(i) := Mux(
+      io.in.stall,
+      s2_physical_index(i),
+      s1_physical_index(i)
+    )
+  }
 
   val last_s3_valid = RegNext(s3_valid)
+  val last_s3_update_meta = RegNext(update_meta)
   val last_s3_need_write = RegNext(need_write)
-  val last_s3_index = RegNext(s3_index)
+  val last_s3_virtual_index = RegNext(s3_virtual_index)
+  val last_s3_tag = RegNext(s3_tag)
+  val last_s3_physical_index = List.fill(nWays)(Reg(UInt(indexLength.W)))
+  for (i <- 0 until nWays) {
+    last_s3_physical_index(i) := s3_physical_index(i)
+  }
+  val last_s3_access_index = RegNext(s3_access_index)
   val last_s3_write_line = RegNext(writeData)
   val last_s3_write_meta = RegNext(write_meta)
-  val s2_hazard_low_prio = s2_valid && last_s3_valid && s2_index === last_s3_index && last_s3_need_write
+  // val s2_hazard_low_prio = s2_valid && last_s3_valid && s2_tag === last_s3_tag && last_s3_need_write
 
   when(!io.in.stall) {
     s2_valid := s1_valid
@@ -81,21 +138,58 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
     s2_data := s1_data
     s2_wen := s1_wen
     s2_memtype := s1_memtype
+    for (i <- 0 until nWays) {
+      when(
+        s1_valid && update_meta && s3_access_index === i.U && s1_virtual_index === s3_virtual_index
+      ) {
+        s2_physical_index(i) := s3_physical_index(i)
+      }.otherwise {
+        s2_physical_index(i) := s1_physical_index(i)
+      }
+    }
   }
-  forward_meta := Mux(s2_hazard_low_prio, last_s3_write_meta, array_meta)
-  forward_cacheline := Mux(s2_hazard_low_prio, last_s3_write_line, array_cacheline)
-  s2_meta := Mux(s2_need_forward, write_meta, forward_meta)
-  s2_cacheline := Mux(s2_need_forward, writeData, forward_cacheline)
-  s2_index := s2_addr(indexLength + offsetLength - 1, offsetLength)
-  s2_tag := s2_addr(xlen - 1, xlen - tagLength)
+  for (i <- 0 until nWays) {
+    forward_meta(i) := Mux(
+      s2_valid && last_s3_valid && (s2_physical_index(i) === last_s3_physical_index(i) || s2_tag === last_s3_tag) && last_s3_update_meta && last_s3_access_index === i.U,
+      last_s3_write_meta,
+      array_meta(i)
+    )
+    forward_cacheline(i) := Mux(
+      s2_valid && last_s3_valid && (s2_physical_index(i) === last_s3_physical_index(i) || s2_tag === last_s3_tag) && last_s3_need_write && last_s3_access_index === i.U,
+      last_s3_write_line,
+      array_cacheline(i)
+    )
+    s2_meta(i) := Mux(
+      s2_valid && s3_valid && (s2_physical_index(i) === s3_physical_index(i) || s2_tag === s3_tag) && s3_access_index === i.U,
+      write_meta,
+      forward_meta(i)
+    )
+    s2_cacheline(i) := Mux(
+      s2_valid && s3_valid && (s2_physical_index(i) === s3_physical_index(i) || s2_tag === s3_tag) && s3_access_index === i.U,
+      writeData,
+      forward_cacheline(i)
+    )
+  }
+
+  s2_virtual_index := s2_addr(
+    virtualIndexLength + offsetLength - 1,
+    offsetLength
+  )
+  s2_tag := s2_addr(xlen - 1, xlen - metaTagLength)
 
   val s2_hitVec = VecInit(s2_meta.map(m => m.valid && m.tag === s2_tag)).asUInt
   val s2_hit_index = PriorityEncoder(s2_hitVec)
-  val s2_victim_index = policy.choose_victim(s2_meta)
+  // random replacement
+  val s2_invalidVec = VecInit(s2_meta.map(m => !m.valid)).asUInt
+  val s2_victim_index = Mux(
+    s2_invalidVec.orR,
+    PriorityEncoder(s2_invalidVec),
+    LFSR(xlen)(log2Ceil(s2_meta.length) - 1, 0)
+  )
   val s2_victim_vec = UIntToOH(s2_victim_index)
   val s2_ismmio = AddressSpace.isMMIO(s2_addr)
   val s2_hit = s2_hitVec.orR && !s2_ismmio
-  val s2_access_index = Mux(s2_hit, s2_hit_index, s2_victim_index)
+  s2_access_index := Mux(s2_hit, s2_hit_index, s2_victim_index)
   val s2_access_vec = UIntToOH(s2_access_index)
 
   /* stage3 registers */
@@ -103,12 +197,10 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
   val s3_data = RegInit(UInt(blockBits.W), 0.U)
   val s3_wen = RegInit(Bool(), false.B)
   val s3_memtype = RegInit(UInt(xlen.W), 0.U)
-  val s3_meta = Reg(Vec(nWays, new MetaData))
+  val s3_meta = Reg(Vec(nWays, new LNMetaData(metaTagLength)))
   val s3_cacheline = Reg(Vec(nWays, new CacheLineData))
-  val s3_tag = Wire(UInt(tagLength.W))
   val s3_lineoffset = Wire(UInt(lineLength.W))
   val s3_wordoffset = Wire(UInt((offsetLength - lineLength).W))
-  val s3_access_index = Reg(chiselTypeOf(s2_access_index))
   val s3_access_vec = Reg(chiselTypeOf(s2_access_vec))
   val s3_hit = Reg(chiselTypeOf(s2_hit))
 
@@ -123,9 +215,21 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
     s3_access_index := s2_access_index
     s3_access_vec := s2_access_vec
     s3_hit := s2_hit
+    for (i <- 0 until nWays) {
+      when(
+        s2_valid && update_meta && s3_access_index === i.U && s2_virtual_index === s3_virtual_index
+      ) {
+        s3_physical_index(i) := s3_physical_index(i)
+      }.otherwise {
+        s3_physical_index(i) := s2_physical_index(i)
+      }
+    }
   }
-  s3_index := s3_addr(indexLength + offsetLength - 1, offsetLength)
-  s3_tag := s3_addr(xlen - 1, xlen - tagLength)
+  s3_virtual_index := s3_addr(
+    virtualIndexLength + offsetLength - 1,
+    offsetLength
+  )
+  s3_tag := s3_addr(xlen - 1, xlen - metaTagLength)
   s3_lineoffset := s3_addr(offsetLength - 1, offsetLength - lineLength)
   s3_wordoffset := s3_addr(offsetLength - lineLength - 1, 0)
 
@@ -141,7 +245,7 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
   val state = RegInit(s_flush)
   val read_address = Cat(s3_addr(xlen - 1, offsetLength), 0.U(offsetLength.W))
   val write_address =
-    Cat(Mux(s3_hit, cacheline_meta.tag, s3_tag), s3_index, 0.U(offsetLength.W))
+    Cat(Mux(s3_hit, cacheline_meta.tag, s3_tag), 0.U(offsetLength.W))
   val mem_read_valid = state === s_memReadResp && io.mem.resp.valid
   val mem_write_valid = state === s_memWriteResp && io.mem.resp.valid
   val mem_read_request_satisfied = !s3_wen && (s3_hit || mem_read_valid)
@@ -150,7 +254,7 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
     mem_read_request_satisfied || mem_write_request_satisfied
   val mmio_request_satisfied = state === s_mmioResp && io.mmio.resp.valid
   val request_satisfied = mem_request_satisfied || mmio_request_satisfied
-  val s2_hazard = s2_valid && s3_valid && s2_index === s3_index
+  val s2_hazard = s2_valid && s3_valid && s2_tag === s3_tag
   stall := s3_valid && !request_satisfied // wait for data
   s2_need_forward := s2_hazard && mem_request_satisfied
 
@@ -167,7 +271,7 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
     write_address,
     read_address
   )
-  io.mem.req.bits.data := write_data(s3_access_index).data.asUInt
+  io.mem.req.bits.data := write_data.data.asUInt
   io.mem.req.bits.wen := state === s_memWriteReq || state === s_memWriteResp
   io.mem.req.bits.memtype := DontCare
   io.mem.resp.ready := s3_valid && (state === s_memReadResp || state === s_memWriteResp)
@@ -218,8 +322,10 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
 
   val target_data = Mux(s3_hit, cacheline_data, fetched_vec)
   val new_data = Wire(new CacheLineData)
-  val meta_index = Wire(UInt(indexLength.W))
-  meta_index := DontCare
+  val meta_index = List.fill(nWays)(Wire(UInt(indexLength.W)))
+  for (i <- 0 until nWays) {
+    meta_index(i) := DontCare
+  }
   result := DontCare
   writeData := DontCare
   write_meta := DontCare
@@ -268,19 +374,13 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
         new_data.data(
           s3_lineoffset
         ) := (mask & filled_data) | (~mask & target_data.data(s3_lineoffset))
-        for (i <- 0 until nWays) {
-          when(s3_access_index === i.U) {
-            writeData(i) := new_data
-          }.otherwise {
-            writeData(i) := s3_cacheline(i)
-          }
-        }
+        writeData := new_data
         write_data := writeData
-        write_meta := policy.update_meta(s3_meta, s3_access_index)
-        write_meta(s3_access_index).valid := true.B
-        // write_meta(s3_access_index).dirty := false.B
-        write_meta(s3_access_index).tag := s3_tag
-        meta_index := s3_index
+        write_meta.valid := true.B
+        write_meta.tag := s3_tag
+        for (i <- 0 until nWays) {
+          meta_index(i) := s3_physical_index(i)
+        }
         // printf(
         //   p"[${GTimer()}] dcache write: offset=${Hexadecimal(offset)}, mask=${Hexadecimal(mask)}, filled_data=${Hexadecimal(filled_data)}\n"
         // )
@@ -334,19 +434,14 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
         // )
         when(!s3_ismmio) {
           when(!s3_hit) {
-            for (i <- 0 until nWays) {
-              when(s3_access_index === i.U) {
-                writeData(i) := target_data
-              }.otherwise {
-                writeData(i) := s3_cacheline(i)
-              }
-            }
+            writeData := target_data
           }
           new_data := target_data
-          write_meta := policy.update_meta(s3_meta, s3_access_index)
-          write_meta(s3_access_index).valid := true.B
-          write_meta(s3_access_index).tag := s3_tag
-          meta_index := s3_index
+          write_meta.valid := true.B
+          write_meta.tag := s3_tag
+          for (i <- 0 until nWays) {
+            meta_index(i) := s3_physical_index(i)
+          }
           // printf(
           //   p"[${GTimer()}] dcache read: mask=${Hexadecimal(mask)}, mem_result=${Hexadecimal(mem_result)}, s3_index=0x${Hexadecimal(s3_index)}\n"
           // )
@@ -359,31 +454,48 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
 
   when(state === s_flush) {
     for (i <- 0 until nWays) {
-      write_meta(i).valid := false.B
-      // write_meta(i).dirty := false.B
-      write_meta(i).meta := 0.U
-      write_meta(i).tag := 0.U
+      write_meta.valid := false.B
+      write_meta.tag := 0.U
+      meta_index(i) := flush_counter.value
+      lnregs(i)(flush_counter.value).valid := false.B
     }
-    meta_index := flush_counter.value
     flush_counter.inc()
   }
 
-  need_write := s3_valid && ((s3_wen && ((s3_hit && state === s_idle) || (!s3_hit && mem_read_valid))) || (!s3_wen && !s3_ismmio && mem_read_valid))
+  need_write := s3_valid && !s3_ismmio && ((s3_wen && mem_write_valid) || (!s3_wen && mem_read_valid))
+  update_meta := s3_valid && !s3_ismmio && ((s3_wen && !s3_hit && mem_write_valid) || (!s3_wen && mem_read_valid))
+
+  for (i <- 0 until nWays) {
+    when(need_write && s3_access_index === i.U) {
+      lnregs(i)(s3_physical_index(i)).valid := true.B
+      lnregs(i)(s3_physical_index(i)).index := s3_virtual_index
+      // printf(p"[${GTimer()}]: [LNRegs update] lnregs(${i})(0x${Hexadecimal(s3_physical_index(i))}) := 0x${Hexadecimal(s3_virtual_index)}\n")
+    }
+  }
 
   if (fpga && enable_blockram) {
-    val metaArray = List.fill(nWays)(Module(new BRAMSyncReadMem(nSets, (new MetaData).getWidth, 1)))
-    val dataArray = List.fill(nWays)(Module(new BRAMSyncReadMem(nSets, (new CacheLineData).getWidth, 1)))
+    val metaArray = List.fill(nWays)(
+      Module(
+        new BRAMSyncReadMem(nSets, (new LNMetaData(metaTagLength)).getWidth, 1)
+      )
+    )
+    val dataArray = List.fill(nWays)(
+      Module(new BRAMSyncReadMem(nSets, (new CacheLineData).getWidth, 1))
+    )
 
     for (i <- 0 until nWays) {
-      metaArray(i).io.addra := read_index
-      metaArray(i).io.addrb := meta_index
+      metaArray(i).io.addra := read_index(i)
+      metaArray(i).io.addrb := meta_index(i)
       metaArray(i).io.wea := false.B
-      metaArray(i).io.web := state === s_flush || (s3_valid && ((s3_wen && ((s3_hit && state === s_idle) || (!s3_hit && mem_read_valid))) || (!s3_wen && !s3_ismmio && (s3_hit || mem_read_valid))))
+      metaArray(
+        i
+      ).io.web := state === s_flush || (update_meta && s3_access_index === i.U)
       metaArray(i).io.dina := DontCare
-      metaArray(i).io.dinb := write_meta(i).asUInt
-      array_meta(i) := metaArray(i).io.douta.asTypeOf(new MetaData)
-      dataArray(i).io.addra := read_index
-      dataArray(i).io.addrb := s3_index
+      metaArray(i).io.dinb := write_meta.asUInt
+      array_meta(i) := metaArray(i).io.douta
+        .asTypeOf(new LNMetaData(metaTagLength))
+      dataArray(i).io.addra := read_index(i)
+      dataArray(i).io.addrb := s3_physical_index(i)
       dataArray(i).io.wea := false.B
       dataArray(i).io.web := need_write && s3_access_index === i.U
       dataArray(i).io.dina := DontCare
@@ -391,33 +503,38 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
       array_cacheline(i) := dataArray(i).io.douta.asTypeOf(new CacheLineData)
     }
   } else {
-    val metaArray = List.fill(nWays)(SyncReadMem(nSets, new MetaData))
+    val metaArray =
+      List.fill(nWays)(SyncReadMem(nSets, new LNMetaData(metaTagLength)))
     val dataArray = List.fill(nWays)(SyncReadMem(nSets, new CacheLineData))
 
     for (i <- 0 until nWays) {
-      array_meta(i) := metaArray(i).read(read_index, !(read_index === s3_index && need_write))
-      array_cacheline(i) := dataArray(i).read(read_index, !(read_index === s3_index && need_write))
+      array_meta(i) := metaArray(i).read(read_index(i),!(s3_access_index === i.U && read_index(i) === meta_index(i) && update_meta))
+      array_cacheline(i) := dataArray(i).read(
+        read_index(i),
+        !(s3_access_index === i.U && read_index(i) === s3_physical_index(
+          i
+        ) && need_write)
+      )
+      // printf(p"[${GTimer()}]: read meta(${i}) addr ${read_index(i)} en ${!(s3_access_index === i.U && read_index(i) === meta_index(i) && update_meta)} data ${array_meta(i)}, read data(${i}) addr ${read_index(i)} en ${!(s3_access_index === i.U && read_index(i) === s3_physical_index(i) && need_write)} data ${array_cacheline(i)}\n")
     }
 
-    when(
-      state === s_flush || (s3_valid && ((s3_wen && ((s3_hit && state === s_idle) || (!s3_hit && mem_read_valid))) || (!s3_wen && !s3_ismmio && (s3_hit || mem_read_valid))))
-    ) {
-      for (i <- 0 until nWays) {
-        metaArray(i).write(meta_index, write_meta(i))
+    for (i <- 0 until nWays) {
+      when(state === s_flush || (update_meta && s3_access_index === i.U)) {
+        // printf(p"[${GTimer()}]: dcache meta write ${write_meta} to metaArray(${i}) index ${meta_index(i)}\n")
+        metaArray(i).write(meta_index(i), write_meta)
       }
     }
 
-    when(need_write) {
-      for (i <- 0 until nWays) {
-        when(s3_access_index === i.U) {
-          dataArray(i).write(s3_index, new_data)
-        }
+    for (i <- 0 until nWays) {
+      when(need_write && s3_access_index === i.U) {
+        // printf(p"[${GTimer()}]: dcache data write ${new_data} to dataarray(${i}) index ${s3_physical_index(i)}\n")
+        dataArray(i).write(s3_physical_index(i), new_data)
       }
     }
   }
 
   // for stat counters
-  if(diffTest) {
+  if (diffTest) {
     val read_misses = RegInit(UInt(64.W), 0.U)
     val read_count = RegInit(UInt(64.W), 0.U)
     val write_misses = RegInit(UInt(64.W), 0.U)
@@ -446,7 +563,7 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
     BoringUtils.addSource(write_count, "dcache_write_count")
   }
 
-
+  // when(GTimer() > 5000000.U) {
   // printf(p"[${GTimer()}]: ${cacheName} Debug Info----------\n")
   // printf(
   //   "stall=%d, s2_need_forward=%d, state=%d, s3_ismmio=%d, s3_hit=%d, result=%x\n",
@@ -457,12 +574,42 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
   //   s3_hit,
   //   result
   // )
-  // printf("s1_valid=%d, s1_addr=%x, s1_index=%x\n", s1_valid, s1_addr, s1_index)
-  // printf("s1_data=%x, s1_wen=%d, s1_memtype=%d\n", s1_data, s1_wen, s1_memtype)
-  // printf("s2_valid=%d, s2_addr=%x, s2_index=%x\n", s2_valid, s2_addr, s2_index)
-  // printf("s2_data=%x, s2_wen=%d, s2_memtype=%d\n", s2_data, s2_wen, s2_memtype)
-  // printf("s3_valid=%d, s3_addr=%x, s3_index=%x\n", s3_valid, s3_addr, s3_index)
-  // printf("s3_data=%x, s3_wen=%d, s3_memtype=%d\n", s3_data, s3_wen, s3_memtype)
+  // printf(
+  //   "s1_valid=%d, s1_addr=%x, s1_virtual_index=%x\n",
+  //   s1_valid,
+  //   s1_addr,
+  //   s1_virtual_index
+  // )
+  // printf(
+  //   "s1_data=%x, s1_wen=%d, s1_memtype=%d\n",
+  //   s1_data,
+  //   s1_wen,
+  //   s1_memtype
+  // )
+  // printf(
+  //   "s2_valid=%d, s2_addr=%x, s2_virtual_index=%x\n",
+  //   s2_valid,
+  //   s2_addr,
+  //   s2_virtual_index
+  // )
+  // printf(
+  //   "s2_data=%x, s2_wen=%d, s2_memtype=%d\n",
+  //   s2_data,
+  //   s2_wen,
+  //   s2_memtype
+  // )
+  // printf(
+  //   "s3_valid=%d, s3_addr=%x, s3_virtual_index=%x\n",
+  //   s3_valid,
+  //   s3_addr,
+  //   s3_virtual_index
+  // )
+  // printf(
+  //   "s3_data=%x, s3_wen=%d, s3_memtype=%d\n",
+  //   s3_data,
+  //   s3_wen,
+  //   s3_memtype
+  // )
   // printf(
   //   "s3_tag=%x, s3_lineoffset=%x, s3_wordoffset=%x\n",
   //   s3_tag,
@@ -473,7 +620,7 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
   // printf(
   //   p"s2_victim_index=${s2_victim_index}, s2_victim_vec=${s2_victim_vec}, s3_access_vec = ${s3_access_vec}\n"
   // )
-  // printf(p"last_s3_valid=${last_s3_valid}, last_s3_need_write=${last_s3_need_write}, last_s3_index=${last_s3_index}, s2_hazard_low_prio=${s2_hazard_low_prio}\n")
+  // printf(p"last_s3_valid=${last_s3_valid}, last_s3_need_write=${last_s3_need_write}\n")
   // printf(p"last_s3_write_line=${last_s3_write_line}\n")
   // printf(p"last_s3_write_meta=${last_s3_write_meta}\n")
   // printf(p"array_cacheline=${array_cacheline}\n")
@@ -484,11 +631,25 @@ class DCacheWriteThroughSplit3Stage(implicit val cacheConfig: CacheConfig)
   // printf(p"s2_meta=${s2_meta}\n")
   // printf(p"s3_cacheline=${s3_cacheline}\n")
   // printf(p"s3_meta=${s3_meta}\n")
+  // for (i <- 0 until nWays) {
+  //   printf(
+  //     p"s1_physical_index(${i})=0x${Hexadecimal(s1_physical_index(i))}, s2_physical_index(${i})=0x${Hexadecimal(
+  //       s2_physical_index(i)
+  //     )}, s3_physical_index(${i})=0x${Hexadecimal(s3_physical_index(i))}, read_index(${i})=0x${Hexadecimal(
+  //       read_index(i)
+  //     )}, meta_index(${i})=0x${Hexadecimal(meta_index(i))}\n"
+  //   )
+  // }
+  // printf(p"need_write=${need_write}, update_meta=${update_meta}\n")
   // printf(p"----------${cacheName} io.in----------\n")
   // printf(p"${io.in}\n")
   // printf(p"----------${cacheName} io.mem----------\n")
   // printf(p"${io.mem}\n")
-  // printf(p"----------${cacheName} io.mmio----------\n")
-  // printf(p"${io.mmio}\n")
+  // for (i <- 0 until nWays) {
+  //   printf(p"lnregs(${i})=${lnregs(i)}\n")
+  // }
+  // // printf(p"----------${cacheName} io.mmio----------\n")
+  // // printf(p"${io.mmio}\n")
   // printf("-----------------------------------------------\n")
+  // }
 }

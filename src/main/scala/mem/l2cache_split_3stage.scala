@@ -7,6 +7,7 @@ import tile.common.control.ControlConst._
 import bus._
 import device._
 import utils._
+import chisel3.util.experimental.BoringUtils
 
 class L2CacheSplit3Stage(val n_sources: Int = 1)(implicit
     val cacheConfig: CacheConfig
@@ -268,6 +269,36 @@ class L2CacheSplit3Stage(val n_sources: Int = 1)(implicit
         }
       }
     }
+  }
+
+  // for stat counters
+  if(diffTest) {
+    val read_misses = RegInit(UInt(64.W), 0.U)
+    val read_count = RegInit(UInt(64.W), 0.U)
+    val write_misses = RegInit(UInt(64.W), 0.U)
+    val write_count = RegInit(UInt(64.W), 0.U)
+    val last_s3_valid = RegNext(s3_valid)
+    val last_s3_addr = RegNext(s3_addr)
+    val last_s3_data = RegNext(s3_data)
+    val last_s3_wen = RegNext(s3_wen)
+    val new_req = s3_valid && (!last_s3_valid || last_s3_addr =/= s3_addr || last_s3_data =/= s3_data || last_s3_wen =/= s3_wen)
+    when(new_req) {
+      when(s3_wen) {
+        write_count := write_count + 1.U
+        when(!s3_hit) {
+          write_misses := write_misses + 1.U
+        }
+      }.otherwise {
+        read_count := read_count + 1.U
+        when(!s3_hit) {
+          read_misses := read_misses + 1.U
+        }
+      }
+    }
+    BoringUtils.addSource(read_misses, "l2cache_read_misses")
+    BoringUtils.addSource(read_count, "l2cache_read_count")
+    BoringUtils.addSource(write_misses, "l2cache_write_misses")
+    BoringUtils.addSource(write_count, "l2cache_write_count")
   }
 
   // printf(p"[${GTimer()}]: ${cacheName} Debug Info----------\n")

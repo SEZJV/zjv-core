@@ -22,7 +22,7 @@ trait projectConfig {
   val static_round = true
   val pec_round = 7
   var hasICache: Boolean = false
-  var hasDCache: Boolean = false
+  var hasDCacheSecure: Boolean = true
   // TODO Delete redundant options
   // Basic
   val xlen          = 64

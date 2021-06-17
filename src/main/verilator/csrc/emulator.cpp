@@ -59,9 +59,87 @@ int main(int argc, char** argv)
    int int_total_cnt = 0;
    long sim_cnt = 0;
 
-   // while (!engine.is_finish()) {
-   //       engine.emu_step(1);
-   // }
+   // fprintf(stderr, "name,IPC,icache misses,icache count,icache miss rate,icache MPKI,");
+   // fprintf(stderr, "dcache read misses,dcache read count,dcache read miss rate,");
+   // fprintf(stderr, "dcache write misses,dcache write count,dcache write miss rate,");
+   // fprintf(stderr, "dcache total misses,dcache total count,dcache total miss rate,dcache MPKI,");
+   // fprintf(stderr, "l2cache read misses,l2cache read count,l2cache read miss rate,");
+   // fprintf(stderr, "l2cache write misses,l2cache write count,l2cache write miss rate,");
+   // fprintf(stderr, "l2cache total misses,l2cache total count,l2cache total miss rate,l2cache MPKI\n");
+
+   while (!engine.is_finish()) {
+      engine.emu_step(1);
+      // fprintf(stderr,"zjv   pc: 0x%016lx (0x%08lx): %s\n",  engine.emu_get_pc(), engine.emu_get_inst(), engine.disasm(engine.emu_get_inst()).c_str());
+      if (!startTest && engine.emu_get_pc() == 0x80000000) {
+         startTest = true;
+      }
+      if (engine.is_finish()) {
+         if (engine.emu_difftest_poweroff() == (long)PROGRAM_PASS) {
+            fprintf(stderr, "\n\t\t \x1b[32m========== [ %s PASS with IPC %f ] ==========\x1b[0m\n", argv[1], 1.0 * sim_cnt / engine.trace_count);
+            // fprintf(stderr, "\n\t\t \x1b[32m %s inst count %ld, access count %ld\x1b[0m\n", argv[1], sim_cnt, (engine.get_emu_state()->dcache_read_count + engine.get_emu_state()->dcache_write_count));
+            // fprintf(stderr, "%s,%f,%ld,%ld,%lf%%,%lf,", argv[1], 1.0 * sim_cnt / engine.trace_count, engine.get_emu_state()->icache_read_misses,engine.get_emu_state()->icache_read_count,100.0 * engine.get_emu_state()->icache_read_misses / engine.get_emu_state()->icache_read_count,1000.0 * engine.get_emu_state()->icache_read_misses / sim_cnt);
+            // fprintf(stderr, "%ld,%ld,%lf%%,", engine.get_emu_state()->dcache_read_misses,
+            //       engine.get_emu_state()->dcache_read_count,
+            //       100.0 * engine.get_emu_state()->dcache_read_misses / engine.get_emu_state()->dcache_read_count);
+            // fprintf(stderr, "%ld,%ld,%lf%%,", engine.get_emu_state()->dcache_write_misses,
+            //       engine.get_emu_state()->dcache_write_count,
+            //       100.0 * engine.get_emu_state()->dcache_write_misses / engine.get_emu_state()->dcache_write_count);
+            // fprintf(stderr, "%ld,%ld,%lf%%,%lf,", (engine.get_emu_state()->dcache_read_misses + engine.get_emu_state()->dcache_write_misses),
+            //       (engine.get_emu_state()->dcache_read_count + engine.get_emu_state()->dcache_write_count),
+            //       100.0 * (engine.get_emu_state()->dcache_read_misses + engine.get_emu_state()->dcache_write_misses) / (engine.get_emu_state()->dcache_read_count + engine.get_emu_state()->dcache_write_count),
+            //       1000.0 * (engine.get_emu_state()->dcache_read_misses + engine.get_emu_state()->dcache_write_misses) / sim_cnt);
+            // fprintf(stderr, "%ld,%ld,%lf%%,", engine.get_emu_state()->l2cache_read_misses,
+            //       engine.get_emu_state()->l2cache_read_count,
+            //       100.0 * engine.get_emu_state()->l2cache_read_misses / engine.get_emu_state()->l2cache_read_count);
+            // fprintf(stderr, "%ld,%ld,%lf%%,", engine.get_emu_state()->l2cache_write_misses,
+            //       engine.get_emu_state()->l2cache_write_count,
+            //       100.0 * engine.get_emu_state()->l2cache_write_misses / engine.get_emu_state()->l2cache_write_count);
+            // fprintf(stderr, "%ld,%ld,%lf%%,%lf\n", (engine.get_emu_state()->l2cache_read_misses + engine.get_emu_state()->l2cache_write_misses),
+            //       (engine.get_emu_state()->l2cache_read_count + engine.get_emu_state()->l2cache_write_count),
+            //       100.0 * (engine.get_emu_state()->l2cache_read_misses + engine.get_emu_state()->l2cache_write_misses) / (engine.get_emu_state()->l2cache_read_count + engine.get_emu_state()->l2cache_write_count),
+            //       1000.0 * (engine.get_emu_state()->l2cache_read_misses + engine.get_emu_state()->l2cache_write_misses) / sim_cnt);
+            
+
+            fprintf(stderr, "\t\t \x1b[32micache total: misses %ld, count %ld, miss rate %lf%%, MPKI %lf\x1b[0m\n",
+                  engine.get_emu_state()->icache_read_misses,
+                  engine.get_emu_state()->icache_read_count,
+                  100.0 * engine.get_emu_state()->icache_read_misses / engine.get_emu_state()->icache_read_count,
+                  1000.0 * engine.get_emu_state()->icache_read_misses / sim_cnt);
+            fprintf(stderr, "\t\t \x1b[32mdcache read: misses %ld, count %ld, miss rate %lf%%,\x1b[0m\n",
+                  engine.get_emu_state()->dcache_read_misses,
+                  engine.get_emu_state()->dcache_read_count,
+                  100.0 * engine.get_emu_state()->dcache_read_misses / engine.get_emu_state()->dcache_read_count);
+            fprintf(stderr, "\t\t \x1b[32mdcache write: misses %ld, count %ld, miss rate %lf%%\x1b[0m\n",
+                  engine.get_emu_state()->dcache_write_misses,
+                  engine.get_emu_state()->dcache_write_count,
+                  100.0 * engine.get_emu_state()->dcache_write_misses / engine.get_emu_state()->dcache_write_count);
+            fprintf(stderr, "\t\t \x1b[32mdcache total: misses %ld, count %ld, miss rate %lf%%, MPKI %lf\x1b[0m\n",
+                  (engine.get_emu_state()->dcache_read_misses + engine.get_emu_state()->dcache_write_misses),
+                  (engine.get_emu_state()->dcache_read_count + engine.get_emu_state()->dcache_write_count),
+                  100.0 * (engine.get_emu_state()->dcache_read_misses + engine.get_emu_state()->dcache_write_misses) / (engine.get_emu_state()->dcache_read_count + engine.get_emu_state()->dcache_write_count),
+                  1000.0 * (engine.get_emu_state()->dcache_read_misses + engine.get_emu_state()->dcache_write_misses) / sim_cnt);
+            fprintf(stderr, "\t\t \x1b[32ml2cache read: misses %ld, count %ld, miss rate %lf%%,\x1b[0m\n",
+                  engine.get_emu_state()->l2cache_read_misses,
+                  engine.get_emu_state()->l2cache_read_count,
+                  100.0 * engine.get_emu_state()->l2cache_read_misses / engine.get_emu_state()->l2cache_read_count);
+            fprintf(stderr, "\t\t \x1b[32ml2cache write: misses %ld, count %ld, miss rate %lf%%\x1b[0m\n",
+                  engine.get_emu_state()->l2cache_write_misses,
+                  engine.get_emu_state()->l2cache_write_count,
+                  100.0 * engine.get_emu_state()->l2cache_write_misses / engine.get_emu_state()->l2cache_write_count);
+            fprintf(stderr, "\t\t \x1b[32ml2cache total: misses %ld, count %ld, miss rate %lf%%, MPKI %lf\x1b[0m\n",
+                  (engine.get_emu_state()->l2cache_read_misses + engine.get_emu_state()->l2cache_write_misses),
+                  (engine.get_emu_state()->l2cache_read_count + engine.get_emu_state()->l2cache_write_count),
+                  100.0 * (engine.get_emu_state()->l2cache_read_misses + engine.get_emu_state()->l2cache_write_misses) / (engine.get_emu_state()->l2cache_read_count + engine.get_emu_state()->l2cache_write_count),
+                  1000.0 * (engine.get_emu_state()->l2cache_read_misses + engine.get_emu_state()->l2cache_write_misses) / sim_cnt);
+         }
+         else
+            fprintf(stderr, "\n\t\t \x1b[31m========== [ %s FAIL ] ==========\x1b[0m\n", argv[1]);
+         break;
+      }
+      if (startTest && engine.emu_difftest_valid()) {
+         sim_cnt++;
+      }
+   }
 
    //  while (!engine.is_finish()) {
    //        engine.sim_solo();
@@ -105,7 +183,7 @@ int main(int argc, char** argv)
          engine.sim_check_interrupt();
          int_total_cnt++;
 
-         if (int_total_cnt > 250000) {
+         if (int_total_cnt > 250) {
             fprintf(stderr, "\n\t\t \x1b[32m========== [ %s PASS with IPC %f ] ==========\x1b[0m\n", argv[1], 1.0 * sim_cnt / engine.trace_count);
             fprintf(stderr, "\t\t \x1b[32msr_itlb %ld, sr_i$ %ld, sr_exe %ld, sr_dtlb %ld, sr_d$ %ld, bj_flush %lf\x1b[0m\n",
                 engine.get_emu_state()->streqs[0],

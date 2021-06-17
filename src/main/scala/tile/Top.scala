@@ -42,6 +42,18 @@ class DiffTestIO extends Bundle with phvntomParams {
   val plicclaim = Output(UInt(32.W))
   val alu_val  = Output(UInt(xlen.W))
   val is_mem   = Output(Bool())
+  val icache_read_misses   = Output(UInt(64.W))
+  val icache_read_count   = Output(UInt(64.W))
+  val icache_write_misses   = Output(UInt(64.W))
+  val icache_write_count   = Output(UInt(64.W))
+  val dcache_read_misses   = Output(UInt(64.W))
+  val dcache_read_count   = Output(UInt(64.W))
+  val dcache_write_misses   = Output(UInt(64.W))
+  val dcache_write_count   = Output(UInt(64.W))
+  val l2cache_read_misses   = Output(UInt(64.W))
+  val l2cache_read_count   = Output(UInt(64.W))
+  val l2cache_write_misses   = Output(UInt(64.W))
+  val l2cache_write_count   = Output(UInt(64.W))
 }
 
 class TopIO extends Bundle with phvntomParams {
@@ -99,6 +111,16 @@ class Top extends Module with phvntomParams {
 
   BoringUtils.addSink(difftest.alu_val, "difftestALU")
   BoringUtils.addSink(difftest.is_mem,  "difftestMem")
+  BoringUtils.addSink(difftest.icache_read_misses, "icache_read_misses")
+  BoringUtils.addSink(difftest.icache_read_count, "icache_read_count")
+  BoringUtils.addSink(difftest.dcache_read_misses, "dcache_read_misses")
+  BoringUtils.addSink(difftest.dcache_read_count, "dcache_read_count")
+  BoringUtils.addSink(difftest.dcache_write_misses, "dcache_write_misses")
+  BoringUtils.addSink(difftest.dcache_write_count, "dcache_write_count")
+  BoringUtils.addSink(difftest.l2cache_read_misses, "l2cache_read_misses")
+  BoringUtils.addSink(difftest.l2cache_read_count, "l2cache_read_count")
+  BoringUtils.addSink(difftest.l2cache_write_misses, "l2cache_write_misses")
+  BoringUtils.addSink(difftest.l2cache_write_count, "l2cache_write_count")
 
   io.difftest := difftest
   io.poweroff := poweroff

@@ -344,4 +344,21 @@ class ShadowICache(implicit val cacheConfig: CacheConfig)
       }
     }
   }
+
+  // for stat counters
+  if(diffTest) {
+    val read_misses = RegInit(UInt(64.W), 0.U)
+    val read_count = RegInit(UInt(64.W), 0.U)
+    val last_s3_addr = RegNext(s3_addr)
+    val last_s3_data = RegNext(s3_data)
+    val new_req = s3_valid && !s3_ismmio && (!last_s3_valid || last_s3_addr =/= s3_addr)
+    when(new_req) {
+      read_count := read_count + 1.U
+      when(!s3_hit) {
+        read_misses := read_misses + 1.U
+      }
+    }
+    BoringUtils.addSource(read_misses, "icache_read_misses")
+    BoringUtils.addSource(read_count, "icache_read_count")
+  }
 }

@@ -190,9 +190,13 @@ class ChiplinkTile extends Module with phvntomParams with projectConfig {
   } else { Module(new CacheDummy()(CacheConfig(name = "icache", lines = 1))) }
   val dcache = if (hasCache) {
     if (ila) {
-      Module(
-        new DCacheWriteThroughSplit3Stage()(CacheConfig(readOnly = true))
-      )
+      if(hasDCacheSecure) {
+        Module(new DCacheSecure()(CacheConfig(name = "dcache", readOnly = true)))
+      } else {
+        Module(
+          new DCacheWriteThroughSplit3Stage()(CacheConfig(readOnly = true))
+        )
+      }
     } else {
       Module(
         new DCacheWriteThroughSplit3StageReorg()(CacheConfig(readOnly = true))

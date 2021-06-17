@@ -195,6 +195,16 @@ void dtengine_t::emu_update_state() {
 
     emu_state->mem       = zjv->io_difftest_is_mem;
     emu_state->pa        = zjv->io_difftest_alu_val;
+    emu_state->icache_read_misses    = zjv->io_difftest_icache_read_misses;
+    emu_state->icache_read_count    = zjv->io_difftest_icache_read_count;
+    emu_state->dcache_read_misses    = zjv->io_difftest_dcache_read_misses;
+    emu_state->dcache_read_count    = zjv->io_difftest_dcache_read_count;
+    emu_state->dcache_write_misses    = zjv->io_difftest_dcache_write_misses;
+    emu_state->dcache_write_count    = zjv->io_difftest_dcache_write_count;
+    emu_state->l2cache_read_misses    = zjv->io_difftest_l2cache_read_misses;
+    emu_state->l2cache_read_count    = zjv->io_difftest_l2cache_read_count;
+    emu_state->l2cache_write_misses    = zjv->io_difftest_l2cache_write_misses;
+    emu_state->l2cache_write_count    = zjv->io_difftest_l2cache_write_count;
 }
 
 void dtengine_t::sim_update_state() {

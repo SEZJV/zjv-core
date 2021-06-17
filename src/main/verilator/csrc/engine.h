@@ -64,6 +64,16 @@ struct difftest_state_t {
     uint32_t plicclaim;
     bool mem;
     reg_t pa;
+    reg_t icache_read_misses;
+    reg_t icache_read_count;
+    reg_t dcache_read_misses;
+    reg_t dcache_read_count;
+    reg_t dcache_write_misses;
+    reg_t dcache_write_count;
+    reg_t l2cache_read_misses;
+    reg_t l2cache_read_count;
+    reg_t l2cache_write_misses;
+    reg_t l2cache_write_count;
 };
 
 class dtengine_t {

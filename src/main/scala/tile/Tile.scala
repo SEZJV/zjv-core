@@ -32,11 +32,13 @@ class Tile extends Module with phvntomParams {
     }
   } else { Module(new CacheDummy()(CacheConfig(name = "icache", lines = 1))) }
   val dcache = if (hasCache) {
-    Module(
-      new DCacheWriteThroughSplit3Stage()(
-        CacheConfig(name = "dcache", readOnly = true)
-      )
-    )
+    if(hasDCacheSecure) {
+        Module(new DCacheSecure()(CacheConfig(name = "dcache", readOnly = true)))
+      } else {
+        Module(
+          new DCacheWriteThroughSplit3Stage()(CacheConfig(readOnly = true))
+        )
+      }
   } else { Module(new CacheDummy()(CacheConfig(name = "dcache", lines = 1))) }
   val mem = Module(new AXI4RAM(memByte = 128 * 1024 * 1024)) // 0x8000000
   core.io.imem <> icache.io.in
