@@ -33,7 +33,7 @@ class Tile extends Module with phvntomParams {
   } else { Module(new CacheDummy()(CacheConfig(name = "icache", lines = 1))) }
   val dcache = if (hasCache) {
     if(hasDCacheSecure) {
-        Module(new DCacheSecure()(CacheConfig(name = "dcache", readOnly = true)))
+        Module(new DCacheSecureHash()(CacheConfig(name = "dcache", readOnly = true)))
       } else {
         Module(
           new DCacheWriteThroughSplit3Stage()(CacheConfig(readOnly = true))
