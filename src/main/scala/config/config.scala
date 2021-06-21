@@ -1,5 +1,6 @@
 package config
 import chisel3.util._
+import Chisel.Bool
 
 trait RISCVConfig {
   var isa: String = "RV64MI"
@@ -21,8 +22,10 @@ trait projectConfig {
   val pec_enable_ppl = true
   val static_round = true
   val pec_round = 7
-  var hasICache: Boolean = false
+  var hasICacheSecure: Boolean = true
   var hasDCacheSecure: Boolean = true
+  var hasL2CacheSecure: Boolean = true
+  var hasAllCacheSecure: Boolean = false
   // TODO Delete redundant options
   // Basic
   val xlen          = 64

@@ -47,7 +47,7 @@ class L2CacheXbar(val n_sources: Int = 1)(implicit val cacheConfig: CacheConfig)
 
   switch(state) {
     is(s_idle) {
-      when(thisReq.valid) {
+      when(thisReq.fire()) {
         inflightSrc := inputArb.io.chosen
         io.in(inputArb.io.chosen).req.ready := true.B
         when(thisReq.valid) {

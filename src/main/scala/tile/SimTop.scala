@@ -30,15 +30,31 @@ class SimTop extends Module with phvntomParams {
 
   val mem_source = List(icache, dcache)
   val memxbar = Module(new CrossbarNto1(1))
-  val l2cache = Module(
-    new L2CacheSplit3Stage(4)(
-      CacheConfig(
-        name = "l2cache",
-        blockBits = dcache.lineBits,
-        totalSize = 128
+  val l2cache = if (hasL2CacheSecure || hasAllCacheSecure) {
+    Module(
+      new L2CacheSecure(4)(
+        CacheConfig(
+          name = "l2cache",
+          blockBits = dcache.lineBits,
+          totalSize = 32,
+          lines = 2,
+          ways = 2
+        )
       )
     )
-  )
+  } else {
+    Module(
+      new L2CacheSplit3Stage(4)(
+        CacheConfig(
+          name = "l2cache",
+          blockBits = dcache.lineBits,
+          totalSize = 32,
+          lines = 2,
+          ways = 2
+        )
+      )
+    )
+  }
   val l2cacheBus = Module(new DUncache(l2cache.lineBits, "mem uncache"))
   dcache.io.mem <> l2cache.io.in(0)
   core.io.dmmu <> l2cache.io.in(1)

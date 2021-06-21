@@ -69,6 +69,9 @@ generate_emulator: $(VERILATOR_DEST_DIR)/emulator $(difftest_target)
 $(SPIKE_DEST_DIR)/Makefile: $(SPIKE_SRC_DIR)/configure
 	mkdir -p $(SPIKE_DEST_DIR)
 	cd $(SPIKE_DEST_DIR) && $< --enable-commitlog --enable-zjv-device
+	# LD_LIBRARY_PATH=/home/zhxj/Hardware/phvntom/build/spike
+	# export LD_LIBRARY_PATH
+
 
 $(libspike): $(SPIKE_DEST_DIR)/Makefile
 	$(MAKE) -C $(SPIKE_DEST_DIR)

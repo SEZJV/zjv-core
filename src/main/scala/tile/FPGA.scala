@@ -21,9 +21,19 @@ class FPGATile extends Module with phvntomParams {
   val icache = if (hasCache) {
     if (ila) {
       if (withCExt) {
-        Module(
-          new ShadowICache()(CacheConfig(name = "icache", readOnly = true, shadowByte = true))
-        )
+        if(hasICacheSecure || hasAllCacheSecure) {
+          Module(
+            new ICacheSecure()(
+              CacheConfig(name = "icache", readOnly = true, shadowByte = true)
+            )
+          )
+        } else {
+          Module(
+            new ShadowICache()(
+              CacheConfig(name = "icache", readOnly = true, shadowByte = true)
+            )
+          )
+        }
       } else {
         Module(
           new ICacheForwardSplitSync3StageMMIO()(CacheConfig(name = "icache", readOnly = true))
@@ -39,8 +49,8 @@ class FPGATile extends Module with phvntomParams {
   } else { Module(new CacheDummy()(CacheConfig(name = "icache", lines = 1))) }
   val dcache = if (hasCache) {
     if (ila) {
-      if(hasDCacheSecure) {
-        Module(new DCacheSecure()(CacheConfig(name = "dcache", readOnly = true)))
+      if(hasDCacheSecure || hasAllCacheSecure) {
+        Module(new DCacheSecureHash()(CacheConfig(name = "dcache", readOnly = true)))
       } else {
         Module(
           new DCacheWriteThroughSplit3Stage()(CacheConfig(readOnly = true))
@@ -58,11 +68,31 @@ class FPGATile extends Module with phvntomParams {
 
   if (hasCache) {
     val l2cache = if (ila) {
-      Module(
-        new L2CacheSplit3Stage(4)(
-          CacheConfig(blockBits = dcache.lineBits, totalSize = 32, lines = 2, ways = 2)
+      if (hasL2CacheSecure || hasAllCacheSecure) {
+        Module(
+          new L2CacheSecure(4)(
+            CacheConfig(
+              name = "l2cache",
+              blockBits = dcache.lineBits,
+              totalSize = 32,
+              lines = 2,
+              ways = 2
+            )
+          )
         )
-      )
+      } else {
+        Module(
+          new L2CacheSplit3Stage(4)(
+            CacheConfig(
+              name = "l2cache",
+              blockBits = dcache.lineBits,
+              totalSize = 32,
+              lines = 2,
+              ways = 2
+            )
+          )
+        )
+      }
     } else {
       Module(
         new L2CacheSplit3StageReorg(4)(

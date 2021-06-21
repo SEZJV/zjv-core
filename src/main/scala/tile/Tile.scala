@@ -18,11 +18,19 @@ class Tile extends Module with phvntomParams {
 
   val icache = if (hasCache) {
     if (withCExt) {
-      Module(
-        new ShadowICache()(
-          CacheConfig(name = "icache", readOnly = true, shadowByte = true)
+      if(hasICacheSecure || hasAllCacheSecure) {
+        Module(
+          new ICacheSecure()(
+            CacheConfig(name = "icache", readOnly = true, shadowByte = true)
+          )
         )
-      )
+      } else {
+        Module(
+          new ShadowICache()(
+            CacheConfig(name = "icache", readOnly = true, shadowByte = true)
+          )
+        )
+      }
     } else {
       Module(
         new ICacheForwardSplitSync3StageMMIO()(
@@ -32,13 +40,15 @@ class Tile extends Module with phvntomParams {
     }
   } else { Module(new CacheDummy()(CacheConfig(name = "icache", lines = 1))) }
   val dcache = if (hasCache) {
-    if(hasDCacheSecure) {
-        Module(new DCacheSecureHash()(CacheConfig(name = "dcache", readOnly = true)))
-      } else {
-        Module(
-          new DCacheWriteThroughSplit3Stage()(CacheConfig(readOnly = true))
-        )
-      }
+    if (hasDCacheSecure || hasAllCacheSecure) {
+      Module(
+        new DCacheSecureHash()(CacheConfig(name = "dcache", readOnly = true))
+      )
+    } else {
+      Module(
+        new DCacheWriteThroughSplit3Stage()(CacheConfig(readOnly = true))
+      )
+    }
   } else { Module(new CacheDummy()(CacheConfig(name = "dcache", lines = 1))) }
   val mem = Module(new AXI4RAM(memByte = 128 * 1024 * 1024)) // 0x8000000
   core.io.imem <> icache.io.in
@@ -51,17 +61,31 @@ class Tile extends Module with phvntomParams {
       // val dcache_wb = Module(new WriteBuffer()(WBConfig(wb_name = "dcache write buffer", dataWidth = dcache.lineBits)))
       // dcache_wb.io.in <> dcache.io.mem
       val memxbar = Module(new CrossbarNto1(1))
-      val l2cache = Module(
-        new L2CacheSplit3Stage(4)(
-          CacheConfig(
-            name = "l2cache",
-            blockBits = dcache.lineBits,
-            totalSize = 32,
-            lines = 2,
-            ways = 2
+      val l2cache = if (hasL2CacheSecure || hasAllCacheSecure) {
+        Module(
+          new L2CacheSecure(4)(
+            CacheConfig(
+              name = "l2cache",
+              blockBits = dcache.lineBits,
+              totalSize = 32,
+              lines = 2,
+              ways = 2
+            )
           )
         )
-      )
+      } else {
+        Module(
+          new L2CacheSplit3Stage(4)(
+            CacheConfig(
+              name = "l2cache",
+              blockBits = dcache.lineBits,
+              totalSize = 32,
+              lines = 2,
+              ways = 2
+            )
+          )
+        )
+      }
       val l2cacheBus = Module(new DUncache(l2cache.lineBits, "mem uncache"))
       dcache.io.mem <> l2cache.io.in(0)
       core.io.dmmu <> l2cache.io.in(1)
@@ -88,10 +112,18 @@ class Tile extends Module with phvntomParams {
     }
   } else {
     val memxbar = Module(new CrossbarNto1(4))
-    val imemBus = Module(new MemUncache(dataWidth = xlen, mname = "imem uncache"))
-    val dmemBus = Module(new MemUncache(dataWidth = xlen, mname = "dmem uncache"))
-    val immuBus = Module(new MemUncache(dataWidth = xlen, mname = "immu uncache"))
-    val dmmuBus = Module(new MemUncache(dataWidth = xlen, mname = "dmmu uncache"))
+    val imemBus = Module(
+      new MemUncache(dataWidth = xlen, mname = "imem uncache")
+    )
+    val dmemBus = Module(
+      new MemUncache(dataWidth = xlen, mname = "dmem uncache")
+    )
+    val immuBus = Module(
+      new MemUncache(dataWidth = xlen, mname = "immu uncache")
+    )
+    val dmmuBus = Module(
+      new MemUncache(dataWidth = xlen, mname = "dmmu uncache")
+    )
     dcache.io.mem <> dmemBus.io.in
     icache.io.mem <> imemBus.io.in
     core.io.immu <> immuBus.io.in
